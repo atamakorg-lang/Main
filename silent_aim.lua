@@ -1,9 +1,9 @@
 -- ============================================================
---  IRON SHADOW — Silent Aim v1.3.3 (ULTIMATE REVISION)
+--  IRON SHADOW — Silent Aim v1.3.4 (FINAL STABLE)
 --  Optimized for Stability | Universal Raycast Support | Mobile
 -- ============================================================
 
-local VERSION = "1.3.3"
+local VERSION = "1.3.4"
 local UI_NAME = "SA_" .. tostring(math.random(100000, 999999))
 
 -- [[ SERVICES ]] --
@@ -96,13 +96,11 @@ local function getPredictedPosition(target)
 
     local finalPredict = CONFIG.PREDICTION_AMOUNT
     if CONFIG.PREDICTION_AUTO then
-        -- Updated: Dynamic prediction incorporating ping and distance
         finalPredict = (dist / 1000) + (ping * 0.8)
     else
         finalPredict = CONFIG.PREDICTION_AMOUNT + (ping * 0.5)
     end
 
-    -- Prevent jitter prediction for static targets
     if velocity.Magnitude < 0.1 then
         return part.Position
     end
@@ -143,8 +141,8 @@ pcall(function() cachedMouseRef = LocalPlayer:GetMouse() end)
 local function isCameraCall()
     if not CONFIG.FILTER_CAMERA then return false end
     local stack = debug.traceback():lower()
-    -- Refined: specifically target camera modules/controls to avoid blocking weapon scripts
-    return (stack:find("camera") or stack:find("control")) and (stack:find("module") or stack:find("collision"))
+    -- Relaxed check to ensure weapon scripts aren't accidentally filtered
+    return (stack:find("camera") and (stack:find("module") or stack:find("control")))
 end
 
 local oldIndex
@@ -154,7 +152,8 @@ oldIndex = hookmetamethod(game, "__index", function(self, key)
             if key == "Hit" then
                 return CFrame.new(cachedTargetPos)
             elseif key == "Target" then
-                return currentTarget and currentTarget.Character and currentTarget.Character:FindFirstChild(CONFIG.TARGET_PART)
+                local part = currentTarget and currentTarget.Character and currentTarget.Character:FindFirstChild(CONFIG.TARGET_PART)
+                return part
             end
         end
     end
@@ -167,7 +166,6 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
     local args = {...}
 
     if not checkcaller() and CONFIG.ENABLED and not CONFIG.PANIC and cachedTargetPos then
-        -- 1. Support for missing modern raycasting methods
         if (method == "Raycast" or method == "Spherecast" or method == "Blockcast" or method == "Shapecast") and self == workspace then
             if not isCameraCall() then
                 local origin = args[1]
@@ -175,13 +173,10 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
                 if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
                     local diff = (cachedTargetPos - origin)
                     local targetDir = getSafeUnit(diff)
-                    if getSafeUnit(direction):Dot(targetDir) > 0.1 then
-                        args[2] = targetDir * direction.Magnitude
-                    end
+                    -- Always redirect if Silent Aim is active and targeting
+                    args[2] = targetDir * direction.Magnitude
                 end
             end
-
-        -- 2. Legacy Raycasting
         elseif method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRayWithWhitelist" then
             if not isCameraCall() then
                 local ray = args[1]
@@ -190,13 +185,9 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
                     local direction = ray.Direction
                     local diff = (cachedTargetPos - origin)
                     local targetDir = getSafeUnit(diff)
-                    if getSafeUnit(direction):Dot(targetDir) > 0.1 then
-                        args[1] = Ray.new(origin, targetDir * direction.Magnitude)
-                    end
+                    args[1] = Ray.new(origin, targetDir * direction.Magnitude)
                 end
             end
-
-        -- 3. Camera Ray Generation Redirection
         elseif (method == "ScreenPointToRay" or method == "ViewportPointToRay") and self == Camera then
             local result = oldNamecall(self, ...)
             if typeof(result) == "Ray" then
@@ -205,8 +196,6 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
                 local targetDir = getSafeUnit(diff)
                 return Ray.new(origin, targetDir * result.Direction.Magnitude)
             end
-
-        -- 4. Remote Redirection
         elseif method == "FireServer" and self:IsA("RemoteEvent") then
             for i = 1, #args do
                 local arg = args[i]
@@ -238,8 +227,9 @@ end
 local function createESP(player)
     if espObjects[player] then return end
     espObjects[player] = {
-        boxOutline  = newDrawing("Square",  {Thickness=3, Color=Color3.new(0,0,0), Visible=false}),
-        box         = newDrawing("Square",  {Thickness=1, Color=CONFIG.ACCENT, Visible=false}),
+        -- Explicitly set Filled = false to prevent blocking vision
+        boxOutline  = newDrawing("Square",  {Thickness=3, Color=Color3.new(0,0,0), Filled=false, Visible=false}),
+        box         = newDrawing("Square",  {Thickness=1, Color=CONFIG.ACCENT, Filled=false, Visible=false}),
         name        = newDrawing("Text",    {Size=13, Color=Color3.new(1,1,1), Outline=true, Center=true, Visible=false}),
         healthBar   = newDrawing("Square",  {Thickness=1, Filled=true, Visible=false}),
     }
@@ -344,4 +334,4 @@ RunService.RenderStepped:Connect(function()
     updateESP()
 end)
 
-print("[Iron Shadow] v"..VERSION.." Fixed & Enhanced.")
+print("[Iron Shadow] v"..VERSION.." Stable.")

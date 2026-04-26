@@ -1,21 +1,26 @@
 -- ====================================================================================================
---  IRON SHADOW — Silent Aim ELITE v1.4.1 (ULTIMATE EDITION)
---  Developed for Maximum Precision, Stability, and Customization.
---  Universal Raycast Redirection | Advanced Prediction | Multi-Hook Detouring | Backtrack
+--  IRON SHADOW — Silent Aim REBORN v1.5.0 (PREMIUM REVISION)
+--  The Ultimate Solution for Precision, Reliability, and Visual Clarity.
+--  Universal Raycast Detouring | Advanced Hooking Engine | Multi-Method Redirection | No-Fill Logic
 -- ====================================================================================================
 
-local VERSION = "1.4.1"
-local UI_NAME = "IRON_SHADOW_ELITE_" .. tostring(math.random(1000000, 9999999))
+local VERSION = "1.5.0"
+local UI_NAME = "IRON_REBORN_" .. tostring(math.random(10000000, 99999999))
 
--- [[ SERVICES ]] --
+-- [[ OPTIMIZATION & SERVICES ]] --
 local Players           = game:GetService("Players")
 local RunService        = game:GetService("RunService")
 local UserInputService  = game:GetService("UserInputService")
 local Stats             = game:GetService("Stats")
 local TweenService      = game:GetService("TweenService")
-local Debris            = game:GetService("Debris")
+local HttpService       = game:GetService("HttpService")
 local Camera            = workspace.CurrentCamera
 local LocalPlayer       = Players.LocalPlayer
+
+-- [[ INTERNAL LOGGING ]] --
+local function debugPrint(...)
+    print("[Iron Shadow Debug]", ...)
+end
 
 -- [[ CONFIGURATION ]] --
 local CONFIG = {
@@ -26,88 +31,73 @@ local CONFIG = {
 
     -- Targeting
     TARGET_PART         = "HumanoidRootPart", -- "Head", "HumanoidRootPart", "Random"
-    HITBOX_CHANCE       = 100,
+    PRIORITIZE_HEAD     = false,
 
     -- Prediction
     PREDICTION_ENABLED  = true,
     PREDICTION_AUTO     = true,
     PREDICTION_AMOUNT   = 0.165,
-    PREDICTION_X_ADJ    = 0,
-    PREDICTION_Y_ADJ    = 0,
-    PREDICTION_Z_ADJ    = 0,
-
-    -- Backtrack (Experimental)
-    BACKTRACK_ENABLED   = false,
-    BACKTRACK_TIME      = 0.2, -- Seconds
+    PREDICTION_OFFSET   = Vector3.new(0, 0, 0),
 
     -- Visuals: FOV
     SHOW_FOV            = true,
     FOV_COLOR           = Color3.fromRGB(255, 0, 0),
     FOV_SIDES           = 64,
-    FOV_THICKNESS       = 1.5,
-    FOV_TRANSPARENCY    = 0.5,
+    FOV_THICKNESS       = 2,
+    FOV_TRANSPARENCY    = 0.6,
 
     -- Visuals: ESP
     ESP_ENABLED         = true,
     ESP_BOX             = true,
-    ESP_BOX_FILLED      = false,
-    ESP_BOX_COLOR       = Color3.fromRGB(255, 0, 0),
     ESP_NAMES           = true,
     ESP_HEALTH          = true,
     ESP_DISTANCE        = true,
     ESP_MAX_DIST        = 2500,
+    ESP_BOX_COLOR       = Color3.fromRGB(255, 0, 0),
 
     -- Visuals: Target
     SHOW_TARGET_DOT     = true,
     TARGET_DOT_COLOR    = Color3.fromRGB(0, 255, 255),
     SHOW_TARGET_LINE    = false,
-    TARGET_LINE_COLOR   = Color3.fromRGB(0, 255, 255),
 
-    -- Advanced Engine
-    SAFE_UNIT           = true,
+    -- Engine Settings
     FILTER_CAMERA       = true,
-    DETOUR_RAYCAST      = true,
-    DETOUR_NAMECALL     = true,
-    DETOUR_INDEX        = true,
-    REDISTRIBUTE_CHANCE = 100,
+    REDIRECTION_INTENSITY = 1.0, -- 0.0 to 1.0
+    REDISTRIBUTE_REMOTES = true,
 
     -- UI Style
-    ACCENT              = Color3.fromRGB(255, 0, 0),
-    BG                  = Color3.fromRGB(10, 10, 12),
-    BG2                 = Color3.fromRGB(15, 15, 18),
+    ACCENT              = Color3.fromRGB(255, 45, 45),
+    BG                  = Color3.fromRGB(12, 12, 14),
+    BG2                 = Color3.fromRGB(18, 18, 22),
     PANIC               = false,
 }
 
 -- [[ STATE MANAGEMENT ]] --
 local espObjects      = {}
-local backtrackData   = {}
 local currentTarget   = nil
 local cachedTargetPos = nil
 local cachedMouseRef  = nil
 local screenCenter    = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
 
 -- [[ DRAWING API WRAPPER ]] --
-local function createDrawing(type, properties)
+local function createDrawing(type, props)
     local d = Drawing.new(type)
 
-    -- Force clear defaults to ensure NO FILLING
+    -- Absolute prevention of "filled" artifacts
     if type == "Square" or type == "Circle" then
         d.Filled = false
     end
     d.Visible = false
     d.Transparency = 1
 
-    for k, v in pairs(properties) do
-        pcall(function() d[k] = v end)
+    for k, v in pairs(props) do
+        local ok, err = pcall(function() d[k] = v end)
+        if not ok then debugPrint("Drawing Prop Error:", k, err) end
     end
 
-    -- RE-ENFORCE FILLED STATUS
-    if type == "Square" or type == "Circle" then
-        if properties.Filled ~= nil then
-            d.Filled = properties.Filled
-        else
-            d.Filled = false
-        end
+    -- Re-enforce Filled=false for outlines
+    if (type == "Square" or type == "Circle") and props.Filled == nil then
+        d.Filled = false
     end
 
     return d
@@ -154,41 +144,17 @@ local function checkVisibility(part, player)
     return true
 end
 
--- [[ BACKTRACK ENGINE ]] --
-task.spawn(function()
-    while true do
-        task.wait(0.01)
-        if CONFIG.PANIC then break end
-
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer and isAlive(player) then
-                local root = player.Character:FindFirstChild("HumanoidRootPart")
-                if root then
-                    if not backtrackData[player] then backtrackData[player] = {} end
-                    table.insert(backtrackData[player], {pos = root.Position, time = tick()})
-
-                    while #backtrackData[player] > 0 and (tick() - backtrackData[player][1].time) > CONFIG.BACKTRACK_TIME do
-                        table.remove(backtrackData[player], 1)
-                    end
-                end
-            elseif backtrackData[player] then
-                backtrackData[player] = nil
-            end
-        end
-    end
-end)
-
 -- [[ PREDICTION LOGIC ]] --
 local function getPredictedPosition(target)
     if not target.Character then return nil end
 
     local partName = CONFIG.TARGET_PART
     if partName == "Random" then
-        local parts = {"Head", "HumanoidRootPart", "UpperTorso", "LowerTorso"}
+        local parts = {"Head", "HumanoidRootPart", "UpperTorso"}
         partName = parts[math.random(1, #parts)]
     end
 
-    local part = target.Character:FindFirstChild(partName) or target.Character:FindFirstChild("HumanoidRootPart")
+    local part = target.Character:FindFirstChild(partName) or target.Character:FindFirstChild("HumanoidRootPart") or target.Character:FindFirstChild("Head")
     if not part then return nil end
 
     local basePos = part.Position
@@ -203,14 +169,16 @@ local function getPredictedPosition(target)
 
     local finalPredict = CONFIG.PREDICTION_AMOUNT
     if CONFIG.PREDICTION_AUTO then
-        finalPredict = (dist / 1150) + (ping * 0.85)
+        -- High-precision dynamic prediction curve
+        finalPredict = (dist / 1000) * 0.95 + (ping * 1.05)
     else
         finalPredict = CONFIG.PREDICTION_AMOUNT + (ping * 0.5)
     end
 
-    local verticalAdj = (dist / 500)^2 * 0.5
+    -- Basic ballistics compensation (Y drop)
+    local verticalAdj = (dist / 400)^1.8 * 0.4
 
-    local predicted = basePos + (velocity * finalPredict) + Vector3.new(CONFIG.PREDICTION_X_ADJ, CONFIG.PREDICTION_Y_ADJ + verticalAdj, CONFIG.PREDICTION_Z_ADJ)
+    local predicted = basePos + (velocity * finalPredict) + Vector3.new(0, verticalAdj, 0) + CONFIG.PREDICTION_OFFSET
 
     return predicted
 end
@@ -221,20 +189,19 @@ local function getNearestTarget()
     local bestPlayer = nil
 
     for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer then
+        if player ~= LocalPlayer and isAlive(player) then
             if not CONFIG.TEAM_CHECK or player.Team ~= LocalPlayer.Team then
-                if isAlive(player) then
-                    local char = player.Character
-                    local part = char:FindFirstChild(CONFIG.TARGET_PART) or char:FindFirstChild("HumanoidRootPart")
-                    if part then
-                        local screenPos, onScreen, depth = getScreenPos(part.Position)
-                        if onScreen and depth > 0 then
-                            local dist = (screenPos - screenCenter).Magnitude
-                            if dist < bestDist then
-                                if checkVisibility(part, player) then
-                                    bestDist = dist
-                                    bestPlayer = player
-                                end
+                local char = player.Character
+                local part = char:FindFirstChild(CONFIG.TARGET_PART) or char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head")
+
+                if part then
+                    local screenPos, onScreen, depth = getScreenPos(part.Position)
+                    if onScreen and depth > 0 then
+                        local dist = (screenPos - screenCenter).Magnitude
+                        if dist < bestDist then
+                            if checkVisibility(part, player) then
+                                bestDist = dist
+                                bestPlayer = player
                             end
                         end
                     end
@@ -245,21 +212,23 @@ local function getNearestTarget()
     return bestPlayer
 end
 
--- [[ ENGINE HOOKS ]] --
+-- [[ HOOKING ENGINE ]] --
 pcall(function() cachedMouseRef = LocalPlayer:GetMouse() end)
 
 local function isCameraCall()
     if not CONFIG.FILTER_CAMERA then return false end
     local stack = debug.traceback():lower()
-    if stack:find("camera") or stack:find("control") or stack:find("collision") then
-        if stack:find("module") or stack:find("common") or stack:find("input") then
+
+    -- Refined stack detection: ignore common weapon modules
+    if stack:find("camera") or stack:find("viewport") then
+        if stack:find("control") or stack:find("interpolat") or stack:find("shaking") or stack:find("bobbing") then
             return true
         end
     end
     return false
 end
 
--- Index Detour
+-- 1. Detour: Index
 local oldIndex
 oldIndex = hookmetamethod(game, "__index", function(self, key)
     if not checkcaller() and CONFIG.ENABLED and not CONFIG.PANIC and cachedTargetPos then
@@ -267,58 +236,62 @@ oldIndex = hookmetamethod(game, "__index", function(self, key)
             if key == "Hit" then
                 return CFrame.new(cachedTargetPos)
             elseif key == "Target" then
-                return currentTarget and currentTarget.Character and currentTarget.Character:FindFirstChild(CONFIG.TARGET_PART)
+                return currentTarget and currentTarget.Character and (currentTarget.Character:FindFirstChild(CONFIG.TARGET_PART) or currentTarget.Character:FindFirstChild("Head"))
             end
         end
     end
     return oldIndex(self, key)
 end)
 
--- Namecall Detour
+-- 2. Detour: Namecall
 local oldNamecall
 oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
     local method = getnamecallmethod()
     local args = {...}
 
     if not checkcaller() and CONFIG.ENABLED and not CONFIG.PANIC and cachedTargetPos then
+        -- Universal Raycasting Hooks
         if (method == "Raycast" or method == "Spherecast" or method == "Blockcast" or method == "Shapecast") and self == workspace then
             if not isCameraCall() then
                 local origin = args[1]
                 local direction = args[2]
                 if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
-                    local diff = (cachedTargetPos - origin)
-                    args[2] = getSafeUnit(diff) * direction.Magnitude
+                    local targetDir = getSafeUnit(cachedTargetPos - origin)
+                    args[2] = targetDir * direction.Magnitude
                 end
             end
+
+        -- Legacy Raycasting Hooks
         elseif method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRayWithWhitelist" then
             if not isCameraCall() then
                 local ray = args[1]
                 if typeof(ray) == "Ray" then
-                    local origin = ray.Origin
-                    local direction = ray.Direction
-                    local diff = (cachedTargetPos - origin)
-                    args[1] = Ray.new(origin, getSafeUnit(diff) * direction.Magnitude)
+                    local targetDir = getSafeUnit(cachedTargetPos - ray.Origin)
+                    args[1] = Ray.new(ray.Origin, targetDir * ray.Direction.Magnitude)
                 end
             end
+
+        -- Camera Projection Hooks (Critical for modern FPS)
         elseif (method == "ScreenPointToRay" or method == "ViewportPointToRay") and self == Camera then
             local result = oldNamecall(self, ...)
             if typeof(result) == "Ray" then
-                local origin = result.Origin
-                local diff = (cachedTargetPos - origin)
-                return Ray.new(origin, getSafeUnit(diff) * result.Direction.Magnitude)
+                local targetDir = getSafeUnit(cachedTargetPos - result.Origin)
+                return Ray.new(result.Origin, targetDir * result.Direction.Magnitude)
             end
-        elseif method == "FireServer" and self:IsA("RemoteEvent") then
+
+        -- Remote Redirection (FireServer)
+        elseif method == "FireServer" and self:IsA("RemoteEvent") and CONFIG.REDISTRIBUTE_REMOTES then
             for i = 1, #args do
                 local arg = args[i]
                 if typeof(arg) == "Vector3" then
-                    local screenPos, onScreen = getScreenPos(arg)
-                    if onScreen and (screenPos - screenCenter).Magnitude < CONFIG.FOV * 2 then
+                    local _, onScreen = getScreenPos(arg)
+                    if onScreen and (arg - Camera.CFrame.Position).Magnitude > 5 then
                         args[i] = cachedTargetPos
                     end
                 elseif typeof(arg) == "CFrame" then
-                    local screenPos, onScreen = getScreenPos(arg.Position)
-                    if onScreen and (screenPos - screenCenter).Magnitude < CONFIG.FOV * 2 then
-                        args[i] = CFrame.new(cachedTargetPos)
+                    local _, onScreen = getScreenPos(arg.Position)
+                    if onScreen and (arg.Position - Camera.CFrame.Position).Magnitude > 5 then
+                        args[i] = CFrame.new(cachedTargetPos) * (arg - arg.Position)
                     end
                 end
             end
@@ -332,8 +305,8 @@ end)
 local function createPlayerESP(player)
     if espObjects[player] then return end
     espObjects[player] = {
-        boxOutline  = createDrawing("Square", {Thickness = 3, Color = Color3.new(0,0,0), Filled = false}),
-        box         = createDrawing("Square", {Thickness = 1, Color = CONFIG.ESP_BOX_COLOR, Filled = false}),
+        boxOutline  = createDrawing("Square", {Thickness = 3, Color = Color3.new(0,0,0)}),
+        box         = createDrawing("Square", {Thickness = 1, Color = CONFIG.ESP_BOX_COLOR}),
         name        = createDrawing("Text",   {Size = 13, Color = Color3.new(1,1,1), Outline = true, Center = true}),
         healthBar   = createDrawing("Square", {Thickness = 1, Filled = true}),
     }
@@ -365,15 +338,19 @@ local function updateESP()
                         local size = Vector2.new(2200 / depth, 3200 / depth)
                         local pos  = Vector2.new(screenPos.X - size.X / 2, screenPos.Y - size.Y / 2)
 
+                        -- Box logic - re-enforced unfilled
                         objs.boxOutline.Position = pos; objs.boxOutline.Size = size; objs.boxOutline.Visible = CONFIG.ESP_BOX
                         objs.box.Position = pos; objs.box.Size = size; objs.box.Visible = CONFIG.ESP_BOX
                         objs.box.Color = (currentTarget == player) and Color3.new(1,1,0) or CONFIG.ESP_BOX_COLOR
-                        objs.box.Filled = false -- ABSOLUTELY NO FILLING
+                        objs.box.Filled = false
+                        objs.boxOutline.Filled = false
 
+                        -- Info
                         local info = player.Name
                         if CONFIG.ESP_DISTANCE then info = info .. " [" .. math.floor(distance) .. "m]" end
                         objs.name.Text = info; objs.name.Position = Vector2.new(screenPos.X, pos.Y - 15); objs.name.Visible = CONFIG.ESP_NAMES
 
+                        -- Health
                         if CONFIG.ESP_HEALTH then
                             local hp = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
                             objs.healthBar.Position = Vector2.new(pos.X - 5, pos.Y + (size.Y * (1-hp)))
@@ -398,15 +375,9 @@ local fovCircle = createDrawing("Circle", {
 })
 
 local targetDot = createDrawing("Circle", {
-    Radius    = 4,
+    Radius    = 5,
     Color     = CONFIG.TARGET_DOT_COLOR,
     Filled    = true,
-    Visible   = false
-})
-
-local targetLine = createDrawing("Line", {
-    Thickness = 1,
-    Color     = CONFIG.TARGET_LINE_COLOR,
     Visible   = false
 })
 
@@ -418,11 +389,12 @@ ScreenGui.Parent = (gethui and gethui()) or game:GetService("CoreGui") or LocalP
 local MobileBtn = Instance.new("TextButton")
 MobileBtn.Size = UDim2.new(0,55,0,55); MobileBtn.Position = UDim2.new(0,20,0.5,-27)
 MobileBtn.BackgroundColor3 = CONFIG.BG; MobileBtn.TextColor3 = CONFIG.ACCENT
-MobileBtn.Text = "ELITE"; MobileBtn.Font = Enum.Font.GothamBold; MobileBtn.TextSize = 14
+MobileBtn.Text = "REBORN"; MobileBtn.Font = Enum.Font.GothamBold; MobileBtn.TextSize = 14
 MobileBtn.Parent = ScreenGui
 Instance.new("UICorner", MobileBtn).CornerRadius = UDim.new(1,0)
 local btnStroke = Instance.new("UIStroke", MobileBtn); btnStroke.Color = CONFIG.ACCENT; btnStroke.Thickness = 2
 
+-- Draggable Logic
 do
     local dragging, dragStart, startPos
     MobileBtn.InputBegan:Connect(function(i)
@@ -450,15 +422,15 @@ TBar.Size = UDim2.new(1,0,0,40); TBar.BackgroundColor3 = CONFIG.BG2; TBar.Parent
 Instance.new("UICorner", TBar)
 
 local TLabel = Instance.new("TextLabel")
-TLabel.Size = UDim2.new(1,-40,1,0); TLabel.Position = UDim2.new(0,15,0,0); TLabel.BackgroundTransparency = 1
-TLabel.Text = "IRON SHADOW ELITE v" .. VERSION; TLabel.TextColor3 = Color3.new(1,1,1); TLabel.Font = "GothamBold"; TLabel.TextSize = 15; TLabel.TextXAlignment = "Left"; TLabel.Parent = TBar
+TBar.Size = UDim2.new(1,0,0,40); TLabel.Size = UDim2.new(1,-40,1,0); TLabel.Position = UDim2.new(0,15,0,0); TLabel.BackgroundTransparency = 1
+TLabel.Text = "IRON SHADOW REBORN v" .. VERSION; TLabel.TextColor3 = Color3.new(1,1,1); TLabel.Font = "GothamBold"; TLabel.TextSize = 15; TLabel.TextXAlignment = "Left"; TLabel.Parent = TBar
 
 local Content = Instance.new("ScrollingFrame")
-Content.Size = UDim2.new(1,0,1,-45); Content.Position = UDim2.new(0,0,0,45); Content.BackgroundTransparency = 1; Content.CanvasSize = UDim2.new(0,0,0,850); Content.ScrollBarThickness = 2; Content.Parent = Win
+Content.Size = UDim2.new(1,0,1,-45); Content.Position = UDim2.new(0,0,0,45); Content.BackgroundTransparency = 1; Content.CanvasSize = UDim2.new(0,0,0,900); Content.ScrollBarThickness = 2; Content.Parent = Win
 local layout = Instance.new("UIListLayout", Content); layout.HorizontalAlignment = "Center"; layout.Padding = UDim.new(0,6)
 Instance.new("UIPadding", Content).PaddingTop = UDim.new(0,5)
 
-local function addToggle(txt, configKey, cb)
+local function addToggle(txt, configKey)
     local b = Instance.new("TextButton")
     b.Size = UDim2.new(0.92,0,0,34); b.BackgroundColor3 = CONFIG.BG2; b.Text = txt..": "..(CONFIG[configKey] and "ON" or "OFF")
     b.TextColor3 = CONFIG[configKey] and CONFIG.ACCENT or Color3.new(0.7,0.7,0.7); b.Font = "GothamBold"; b.TextSize = 12; b.Parent = Content
@@ -467,11 +439,10 @@ local function addToggle(txt, configKey, cb)
         CONFIG[configKey] = not CONFIG[configKey]
         b.Text = txt..": "..(CONFIG[configKey] and "ON" or "OFF")
         b.TextColor3 = CONFIG[configKey] and CONFIG.ACCENT or Color3.new(0.7,0.7,0.7)
-        if cb then cb(CONFIG[configKey]) end
     end)
 end
 
-local function addSlider(txt, min, max, configKey, factor, cb)
+local function addSlider(txt, min, max, configKey)
     local f = Instance.new("Frame")
     f.Size = UDim2.new(0.92,0,0,48); f.BackgroundColor3 = CONFIG.BG2; f.Parent = Content
     Instance.new("UICorner", f)
@@ -480,16 +451,13 @@ local function addSlider(txt, min, max, configKey, factor, cb)
     local bar = Instance.new("Frame")
     bar.Size = UDim2.new(0.85,0,0,5); bar.Position = UDim2.new(0.075,0,0.65,0); bar.BackgroundColor3 = Color3.new(0.2,0.2,0.2); bar.Parent = f
     local fill = Instance.new("Frame")
-    local currentVal = CONFIG[configKey]
-    local startP = (currentVal - min) / (max - min)
-    fill.Size = UDim2.new(math.clamp(startP, 0, 1),0,1,0); fill.BackgroundColor3 = CONFIG.ACCENT; fill.Parent = bar
+    fill.Size = UDim2.new(math.clamp((CONFIG[configKey]-min)/(max-min), 0, 1),0,1,0); fill.BackgroundColor3 = CONFIG.ACCENT; fill.Parent = bar
 
     local function updateSlider(input)
         local p = math.clamp((input.Position.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
         local val = min + p*(max-min)
-        if factor >= 1 then val = math.floor(val) end
+        if max > 10 then val = math.floor(val) end
         fill.Size = UDim2.new(p,0,1,0); l.Text = txt..": "..tostring(val); CONFIG[configKey] = val
-        if cb then cb(val) end
     end
     local draggingSlider = false
     f.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then draggingSlider = true; updateSlider(input) end end)
@@ -500,9 +468,9 @@ end
 addToggle("Silent Aim Enabled", "ENABLED")
 addToggle("Team Check", "TEAM_CHECK")
 addToggle("Visibility Check", "VISIBILITY_CHECK")
-addSlider("FOV Radius", 10, 800, "FOV", 1)
-addSlider("FOV Transparency", 0, 1, "FOV_TRANSPARENCY", 0.1)
-addToggle("Show FOV Circle", "SHOW_FOV")
+addSlider("FOV Radius", 10, 800, "FOV")
+addSlider("FOV Transparency", 0, 1, "FOV_TRANSPARENCY")
+addToggle("Show FOV", "SHOW_FOV")
 addToggle("ESP Enabled", "ESP_ENABLED")
 addToggle("ESP Boxes", "ESP_BOX")
 addToggle("Prediction Enabled", "PREDICTION_ENABLED")
@@ -521,7 +489,7 @@ RunService.RenderStepped:Connect(function()
     currentTarget = CONFIG.ENABLED and getNearestTarget() or nil
     cachedTargetPos = currentTarget and getPredictedPosition(currentTarget) or nil
 
-    -- Visual: FOV
+    -- Visual: FOV - Re-enforce No Fill
     if CONFIG.SHOW_FOV and CONFIG.ENABLED then
         fovCircle.Position     = screenCenter
         fovCircle.Radius       = CONFIG.FOV
@@ -536,27 +504,17 @@ RunService.RenderStepped:Connect(function()
     -- Visual: Indicators
     if cachedTargetPos then
         local sp, onScreen = getScreenPos(cachedTargetPos)
-
         if CONFIG.SHOW_TARGET_DOT and onScreen then
             targetDot.Position = sp
             targetDot.Visible  = true
         else
             targetDot.Visible  = false
         end
-
-        if CONFIG.SHOW_TARGET_LINE and onScreen then
-            targetLine.From    = screenCenter
-            targetLine.To      = sp
-            targetLine.Visible = true
-        else
-            targetLine.Visible = false
-        end
     else
         targetDot.Visible  = false
-        targetLine.Visible = false
     end
 
     updateESP()
 end)
 
-print("[Iron Shadow Elite] v"..VERSION.." Initialized. Visual fixes applied.")
+debugPrint("Iron Shadow Reborn v"..VERSION.." Initialized.")
